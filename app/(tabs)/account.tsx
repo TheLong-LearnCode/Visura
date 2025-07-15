@@ -1,19 +1,24 @@
 import { Colors } from '@/utils/Colors';
+import { authApi } from '@/utils/api';
 import { FontAwesome5 } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
+import { router } from 'expo-router';
 import moment from 'moment';
 import React, { useEffect, useState } from 'react';
 import {
     Alert,
+    Modal,
     ScrollView,
     StyleSheet,
     Switch,
     Text,
+    TextInput,
     TouchableOpacity,
     View
 } from 'react-native';
 import Toast from 'react-native-toast-message';
+
 
 interface UserStats {
     totalImages: number;
@@ -23,6 +28,14 @@ interface UserStats {
 interface UserSettings {
     notifications: boolean;
     autoSave: boolean;
+}
+
+interface UserProfile {
+    _id: string;
+    username: string;
+    email: string;
+    dob: string;
+    createdAt: string;
 }
 
 export default function Account() {
@@ -36,9 +49,38 @@ export default function Account() {
         autoSave: true,
     });
 
+    const [profile, setProfile] = useState<UserProfile | null>(null);
+    const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+    const [isUpdateModalVisible, setIsUpdateModalVisible] = useState(false);
+    const [updateFormData, setUpdateFormData] = useState({
+        username: '',
+        email: '',
+        dob: ''
+    });
+    const [isUpdating, setIsUpdating] = useState(false);
+
     useEffect(() => {
         loadUserData();
+        loadUserProfile();
     }, []);
+
+    const loadUserProfile = async () => {
+        try {
+            setIsLoadingProfile(true);
+            const profileData = await authApi.getProfile();
+            setProfile(profileData);
+        } catch (error) {
+            console.error('Error loading profile:', error);
+            Toast.show({
+                type: 'error',
+                text1: 'Profile load failed',
+                text2: 'Could not load user profile',
+                visibilityTime: 3000,
+            });
+        } finally {
+            setIsLoadingProfile(false);
+        }
+    };
 
     const loadUserData = async () => {
         try {
@@ -120,6 +162,85 @@ export default function Account() {
         );
     };
 
+    const openUpdateModal = () => {
+        if (profile) {
+            setUpdateFormData({
+                username: profile.username,
+                email: profile.email,
+                dob: moment(profile.dob).format('DD/MM/YYYY')
+            });
+            setIsUpdateModalVisible(true);
+        }
+    };
+
+    const handleUpdateProfile = async () => {
+        if (!updateFormData.username || !updateFormData.email || !updateFormData.dob) {
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Please fill in all fields',
+                visibilityTime: 3000,
+            });
+            return;
+        }
+
+        try {
+            setIsUpdating(true);
+            const [day, month, year] = updateFormData.dob.split('/').map(Number);
+            const dobString = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+
+            // Check if email is being changed
+            const isEmailChanged = profile && updateFormData.email !== profile.email;
+
+            const updatedProfile = await authApi.updateProfile({
+                username: updateFormData.username,
+                email: updateFormData.email,
+                dob: dobString,
+            });
+
+            setProfile(updatedProfile);
+            setIsUpdateModalVisible(false);
+
+            if (isEmailChanged) {
+                // If email changed, logout and redirect to login
+                Toast.show({
+                    type: 'success',
+                    text1: 'Profile Updated',
+                    text2: 'Email changed. Please login again for security.',
+                    visibilityTime: 4000,
+                });
+
+                // Logout after a short delay to show the toast
+                setTimeout(async () => {
+                    try {
+                        await authApi.logout();
+                        router.replace('/(auth)/login');
+                    } catch (error) {
+                        // Force redirect even if logout API fails
+                        router.replace('/(auth)/login');
+                    }
+                }, 2000);
+            } else {
+                Toast.show({
+                    type: 'success',
+                    text1: 'Success',
+                    text2: 'Profile updated successfully!',
+                    visibilityTime: 3000,
+                });
+            }
+        } catch (error: any) {
+            const message = error.response?.data?.message || 'Update failed. Please try again.';
+            Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: message,
+                visibilityTime: 3000,
+            });
+        } finally {
+            setIsUpdating(false);
+        }
+    };
+
     const StatCard = ({ icon, title, value, color }: { icon: string; title: string; value: string; color: string }) => (
         <View style={styles.statCard}>
             <View style={[styles.statIcon, { backgroundColor: color }]}>
@@ -182,9 +303,76 @@ export default function Account() {
                 <View style={styles.profileAvatar}>
                     <FontAwesome5 name="user" size={40} color={Colors.white} />
                 </View>
-                <Text style={styles.profileName}>AI Artist</Text>
-                <Text style={styles.profileSubtitle}>Visura Creator</Text>
+                {isLoadingProfile ? (
+                    <>
+                        <Text style={styles.profileName}>Loading...</Text>
+                        <Text style={styles.profileSubtitle}>Please wait</Text>
+                    </>
+                ) : profile ? (
+                    <>
+                        <Text style={styles.profileName}>{profile.username}</Text>
+                    </>
+                ) : (
+                    <>
+                        <Text style={styles.profileName}>Unknown User</Text>
+                        <Text style={styles.profileSubtitle}>Failed to load profile</Text>
+                    </>
+                )}
             </LinearGradient>
+
+            {/* Profile Details Section */}
+            {profile && (
+                <View style={styles.section}>
+                    <Text style={styles.sectionTitle}>Profile Information</Text>
+                    <View style={styles.profileDetailsContainer}>
+                        <View style={styles.profileDetailItem}>
+                            <FontAwesome5 name="user" size={16} color={Colors.purple} />
+                            <View style={styles.profileDetailText}>
+                                <Text style={styles.profileDetailLabel}>Username</Text>
+                                <Text style={styles.profileDetailValue}>{profile.username}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.profileDetailItem}>
+                            <FontAwesome5 name="envelope" size={16} color={Colors.purple} />
+                            <View style={styles.profileDetailText}>
+                                <Text style={styles.profileDetailLabel}>Email</Text>
+                                <Text style={styles.profileDetailValue}>{profile.email}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.profileDetailItem}>
+                            <FontAwesome5 name="birthday-cake" size={16} color={Colors.purple} />
+                            <View style={styles.profileDetailText}>
+                                <Text style={styles.profileDetailLabel}>Date of Birth</Text>
+                                <Text style={styles.profileDetailValue}>
+                                    {moment(profile.dob).format('DD MMMM YYYY')}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.profileDetailItem}>
+                            <FontAwesome5 name="calendar-plus" size={16} color={Colors.purple} />
+                            <View style={styles.profileDetailText}>
+                                <Text style={styles.profileDetailLabel}>Member Since</Text>
+                                <Text style={styles.profileDetailValue}>
+                                    {moment(profile.createdAt).format('DD MMMM YYYY')}
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+                </View>
+            )}
+
+            {/* Update Profile Button */}
+            {profile && (
+                <View style={styles.section}>
+                    <TouchableOpacity
+                        style={styles.updateButton}
+                        onPress={openUpdateModal}
+                    >
+                        <FontAwesome5 name="edit" size={16} color={Colors.white} />
+                        <Text style={styles.updateButtonText}>Update Profile</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
 
             {/* Stats Section */}
             <View style={styles.section}>
@@ -295,15 +483,24 @@ export default function Account() {
                                     {
                                         text: 'Logout',
                                         style: 'destructive',
-                                        onPress: () => {
-                                            Toast.show({
-                                                type: 'success',
-                                                text1: 'Logged out successfully! 👋',
-                                                text2: 'See you again soon',
-                                                visibilityTime: 3000,
-                                            });
-                                            // Here you would typically handle logout logic
-                                            // e.g., clear auth tokens, navigate to login screen
+                                        onPress: async () => {
+                                            try {
+                                                await authApi.logout();
+                                                Toast.show({
+                                                    type: 'success',
+                                                    text1: 'Logged out successfully! 👋',
+                                                    text2: 'See you again soon',
+                                                    visibilityTime: 3000,
+                                                });
+                                                router.replace('/(auth)/login');
+                                            } catch (error) {
+                                                Toast.show({
+                                                    type: 'error',
+                                                    text1: 'Logout failed',
+                                                    text2: 'Please try again',
+                                                    visibilityTime: 3000,
+                                                });
+                                            }
                                         },
                                     },
                                 ]
@@ -320,6 +517,88 @@ export default function Account() {
                 </View>
             </View>
             <Toast />
+
+            {/* Update Profile Modal */}
+            <Modal
+                visible={isUpdateModalVisible}
+                animationType="slide"
+                transparent={true}
+                onRequestClose={() => setIsUpdateModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalContent}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>Update Profile</Text>
+                            <TouchableOpacity
+                                onPress={() => setIsUpdateModalVisible(false)}
+                                style={styles.closeButton}
+                            >
+                                <FontAwesome5 name="times" size={20} color={Colors.gray} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <View style={styles.modalBody}>
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>Username</Text>
+                                <TextInput
+                                    style={styles.modalInput}
+                                    value={updateFormData.username}
+                                    onChangeText={(text) => setUpdateFormData({ ...updateFormData, username: text })}
+                                    placeholder="Enter username"
+                                    placeholderTextColor={Colors.gray}
+                                    editable={!isUpdating}
+                                />
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>Email</Text>
+                                <TextInput
+                                    style={styles.modalInput}
+                                    value={updateFormData.email}
+                                    onChangeText={(text) => setUpdateFormData({ ...updateFormData, email: text })}
+                                    placeholder="Enter email"
+                                    placeholderTextColor={Colors.gray}
+                                    keyboardType="email-address"
+                                    autoCapitalize="none"
+                                    editable={!isUpdating}
+                                />
+                            </View>
+
+                            <View style={styles.inputGroup}>
+                                <Text style={styles.inputLabel}>Date of Birth (DD/MM/YYYY)</Text>
+                                <TextInput
+                                    style={styles.modalInput}
+                                    value={updateFormData.dob}
+                                    onChangeText={(text) => setUpdateFormData({ ...updateFormData, dob: text })}
+                                    placeholder="DD/MM/YYYY"
+                                    placeholderTextColor={Colors.gray}
+                                    editable={!isUpdating}
+                                />
+                            </View>
+                        </View>
+
+                        <View style={styles.modalFooter}>
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.cancelButton]}
+                                onPress={() => setIsUpdateModalVisible(false)}
+                                disabled={isUpdating}
+                            >
+                                <Text style={styles.cancelButtonText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={[styles.modalButton, styles.saveButton, isUpdating && styles.buttonDisabled]}
+                                onPress={handleUpdateProfile}
+                                disabled={isUpdating}
+                            >
+                                <Text style={styles.saveButtonText}>
+                                    {isUpdating ? 'Updating...' : 'Save Changes'}
+                                </Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
         </ScrollView>
     );
 }
@@ -467,5 +746,130 @@ const styles = StyleSheet.create({
     footerVersion: {
         fontSize: 14,
         color: Colors.gray,
+    },
+    profileDetailsContainer: {
+        backgroundColor: Colors.background,
+        borderRadius: 12,
+        padding: 16,
+    },
+    profileDetailItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.gray + '20',
+    },
+    profileDetailText: {
+        marginLeft: 12,
+        flex: 1,
+    },
+    profileDetailLabel: {
+        fontSize: 12,
+        color: Colors.gray,
+        marginBottom: 2,
+    },
+    profileDetailValue: {
+        fontSize: 16,
+        color: Colors.white,
+        fontWeight: '500',
+    },
+    updateButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.purple,
+        borderRadius: 10,
+        paddingVertical: 12,
+        paddingHorizontal: 20,
+        marginTop: 15,
+        alignSelf: 'flex-start',
+    },
+    updateButtonText: {
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: '600',
+        marginLeft: 10,
+    },
+    modalOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(0,0,0,0.5)',
+    },
+    modalContent: {
+        backgroundColor: Colors.black,
+        borderRadius: 15,
+        width: '80%',
+        maxWidth: 400,
+        overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: Colors.white,
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: Colors.white,
+    },
+    modalTitle: {
+        fontSize: 20,
+        fontWeight: 'bold',
+        color: Colors.text,
+    },
+    closeButton: {
+        padding: 5,
+    },
+    modalBody: {
+        padding: 20,
+    },
+    inputGroup: {
+        marginBottom: 15,
+    },
+    inputLabel: {
+        fontSize: 14,
+        color: Colors.gray,
+        marginBottom: 5,
+    },
+    modalInput: {
+        backgroundColor: Colors.background,
+        borderRadius: 8,
+        paddingHorizontal: 15,
+        paddingVertical: 12,
+        fontSize: 16,
+        color: Colors.white,
+        borderWidth: 1,
+        borderColor: Colors.gray,
+    },
+    modalFooter: {
+        flexDirection: 'row',
+        justifyContent: 'space-around',
+        padding: 20,
+        borderTopWidth: 1,
+        borderTopColor: Colors.white,
+    },
+    modalButton: {
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 8,
+    },
+    saveButton: {
+        backgroundColor: Colors.purple,
+    },
+    saveButtonText: {
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    cancelButton: {
+        backgroundColor: Colors.gray,
+    },
+    cancelButtonText: {
+        color: Colors.white,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    buttonDisabled: {
+        opacity: 0.7,
     },
 }); 
